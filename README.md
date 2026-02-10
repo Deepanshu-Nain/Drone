@@ -1,6 +1,6 @@
-# 🚁 Hand-Gesture Controlled Drone Simulator
+# 🚁 Hand-Gesture Controlled 3D Drone Simulator
 
-A real-time virtual drone simulator controlled entirely through hand gestures using computer vision and machine learning. This project demonstrates an intuitive human-computer interaction system where users can take off, fly, hover, and land a virtual drone using natural hand movements captured through a webcam.
+A real-time virtual drone simulator with **full 3D maneuvering** controlled entirely through hand gestures using computer vision and machine learning. This project demonstrates an intuitive human-computer interaction system where users can take off, fly in 3D space (X, Y, Z axes), hover, and land a virtual drone using natural hand movements captured through a webcam.
 
 ![Python](https://img.shields.io/badge/Python-3.7+-blue.svg)
 ![OpenCV](https://img.shields.io/badge/OpenCV-4.x-green.svg)
@@ -12,20 +12,29 @@ A real-time virtual drone simulator controlled entirely through hand gestures us
 1. **State Machine Architecture**: Implements a robust 5-state finite state machine (FSM) for safe drone operation
    - GROUNDED → TAKEOFF → FLYING → HOVER → LANDING → GROUNDED
 
-2. **Safety-First Design**: 
+2. **Full 3D Spatial Control**: 
+   - **X-axis (Left/Right)**: Hand horizontal position
+   - **Y-axis (Up/Down)**: Hand vertical position  
+   - **Z-axis (Forward/Backward)**: Hand size/distance from camera
+   - Real-time depth perception using palm width measurement
+   - Perspective scaling for realistic 3D visualization
+
+3. **Safety-First Design**: 
    - **Hold-to-Land Mechanism**: Requires a 2-second fist hold to initiate landing, preventing accidental commands
    - **Auto-stabilization**: Smooth transitions between states with controlled acceleration/deceleration
    - **Graceful Degradation**: Defaults to hover mode when hand tracking is lost
 
-3. **Intuitive Gesture Control**:
-   - **Open Hand**: Take off / Resume flying / Steer drone
+4. **Intuitive Gesture Control**:
+   - **Open Hand**: Take off / Resume flying / Steer drone in 3D space
    - **Fist**: Emergency brake / Hold for landing
-   - **Hand Position**: Direct positional control in 2D space
-   - **Hand Spread**: Controls drone size (simulating altitude perspective)
+   - **Hand Position**: Direct X/Y positional control
+   - **Hand Size**: Forward/backward depth control (Z-axis)
+   - **Hand Spread**: Fine-tunes drone size visualization
 
-4. **Real-Time Visual Feedback**:
+5. **Real-Time Visual Feedback**:
    - Color-coded states for instant status recognition
-   - Live altitude indicator bar
+   - Live altitude indicator bar (Y-axis)
+   - **NEW: Live depth indicator bar (Z-axis)**
    - Landing countdown visualization
    - Hand landmark overlay for debugging
 
@@ -119,6 +128,43 @@ timestamp(ms) = (current_time - start_time) × 1000
 
 This ensures frame-accurate hand tracking in the video stream.
 
+### 6. 3D Depth Calculation (Z-Axis Control)
+
+#### Palm Width-Based Distance Estimation
+The system calculates hand distance from camera using palm width:
+
+```
+hand_width = √[(x₁₇ - x₁)² + (y₁₇ - y₁)²]
+```
+
+Where:
+- `(x₁, y₁)` = Thumb base landmark (landmark 1)
+- `(x₁₇, y₁₇)` = Pinky base landmark (landmark 17)
+- `hand_width` = Euclidean distance across palm
+
+**Depth Mapping**:
+```
+target_depth = (hand_width - 0.15) / (0.35 - 0.15)
+depth ∈ [MIN_DEPTH, MAX_DEPTH] = [0.2, 1.0]
+```
+
+**Principle**: When hand moves closer to camera, palm appears larger (hand_width increases). When hand moves away, palm appears smaller. This inverse relationship provides intuitive depth control.
+
+**Depth Smoothing**: Uses lighter smoothing (α = 0.15) for responsive Z-axis control:
+```
+Z(t) = (1 - 0.15) × Z(current) + 0.15 × Z(target)
+Z(t) = 0.85 × Z(current) + 0.15 × Z(target)
+```
+
+**Perspective Scaling**: Drone size adjusts with depth:
+```
+depth_scale = 0.5 + depth × 0.5
+final_size = base_size × depth_scale
+```
+- Near (depth = 1.0): scale = 1.0× (full size)
+- Middle (depth = 0.5): scale = 0.75× 
+- Far (depth = 0.2): scale = 0.6× (60% size)
+
 ## 🏗️ System Architecture
 
 ### State Machine Diagram
@@ -155,8 +201,8 @@ This ensures frame-accurate hand tracking in the video stream.
 |-------|----------|-------------------|----------------|
 | **GROUNDED** | Drone sits on ground, centered | Open hand to takeoff | Gesture = Open |
 | **TAKEOFF** | Auto-ascends at constant speed | None (automatic) | altitude ≥ 1.0 |
-| **FLYING** | Follows hand position in 2D | Open hand = steer, Fist = brake | Gesture = Fist |
-| **HOVER** | Maintains current position | Open hand = resume, Hold fist = land | Gesture = Open OR Hold fist 2s |
+| **FLYING** | Follows hand in 3D space (X/Y/Z) | Open hand = steer 3D, Fist = brake | Gesture = Fist |
+| **HOVER** | Maintains current 3D position | Open hand = resume, Hold fist = land | Gesture = Open OR Hold fist 2s |
 | **LANDING** | Auto-descends, drifts to center | None (automatic) | altitude ≤ 0 |
 
 ## 🎯 Core Logic Flow
@@ -221,8 +267,10 @@ MediaPipe detects 21 hand landmarks (0-20):
 
 **Key Landmarks Used**:
 - `0` (Wrist): Base reference point
-- `9` (Middle finger base): Target position for drone movement
+- `1` (Thumb base): Depth calculation (palm width)
+- `9` (Middle finger base): Target position for X/Y drone movement
 - `12` (Middle finger tip): Gesture classification
+- `17` (Pinky base): Depth calculation (palm width)
 
 ### Model Configuration
 
@@ -252,14 +300,19 @@ HandLandmarkerOptions:
    - Crosshair (center point)
    - Circle (body)
    - 4 White circles (rotors at corners)
+   - Dynamic sizing based on both hand spread and depth
 
 2. **Ground Line**: Gray horizontal line at 85% frame height
 
-3. **Altitude Bar**: Right-side vertical indicator showing current altitude
+3. **Altitude Bar** (Right side): Vertical indicator showing current altitude (Y-axis)
 
-4. **Status Text**: Top-left corner with current state and available controls
+4. **Depth Bar** (Left side): Vertical indicator showing forward/backward position (Z-axis)
+   - "NEAR" label at top (close to camera)
+   - "FAR" label at bottom (away from camera)
 
-5. **Landing Countdown**: Progress bar during hold-to-land sequence
+5. **Status Text**: Top-left corner with current state and available controls
+
+6. **Landing Countdown**: Progress bar during hold-to-land sequence
 
 ## 🚀 Getting Started
 
@@ -288,19 +341,28 @@ python new_drone.py
 | Gesture | Action | Context |
 |---------|--------|---------|
 | Open Hand | Take off | When grounded |
-| Open Hand | Steer drone (follows hand) | While flying |
+| Open Hand (Move L/R) | Steer left/right (X-axis) | While flying |
+| Open Hand (Move Up/Down) | Steer up/down (Y-axis) | While flying |
+| Open Hand (Move Near/Far) | Move forward/backward (Z-axis) | While flying |
 | Open Hand | Resume flying | While hovering |
 | Fist (tap) | Emergency brake → Hover | While flying |
 | Fist (hold 2s) | Initiate landing | While hovering |
 | 'Q' key | Safe landing / Quit | Anytime |
 
+**3D Control Details**:
+- **Left/Right**: Move hand horizontally across camera view
+- **Up/Down**: Move hand vertically in camera view  
+- **Forward/Backward**: Move hand closer to or farther from camera (drone size changes on depth bar)
+
 ### Tips for Best Performance
 
 1. **Lighting**: Ensure good, even lighting on your hand
 2. **Background**: Use a plain background for better hand detection
-3. **Distance**: Position hand 1-2 feet from camera
+3. **Distance**: Position hand 1-2 feet from camera for optimal tracking
 4. **Orientation**: Face palm toward camera for best tracking
 5. **Stability**: Keep arm relatively stable; use wrist movements for fine control
+6. **3D Control**: Move hand gradually toward/away from camera to control depth - larger hand = closer (forward), smaller hand = farther (backward)
+7. **Calibration**: Start at arm's length for middle depth position, then move closer or extend farther for full Z-axis range
 
 ## 📊 Performance Characteristics
 
@@ -344,7 +406,10 @@ This project demonstrates:
 - 🎯 **Real-Time Systems**: Managing latency and smoothness
 - 🔄 **State Management**: FSM design patterns
 - 📐 **Mathematical Modeling**: Distance metrics, interpolation, filtering
+- 📊 **3D Spatial Algorithms**: Depth estimation from 2D images
+- 👁️ **Computer Vision**: Landmark detection, perspective projection
 - 🎨 **Computer Graphics**: Real-time rendering and UI design
+- 📱 **Signal Processing**: Multi-axis smoothing and noise reduction
 
 ## 🛡️ Safety Features
 
@@ -357,14 +422,15 @@ This project demonstrates:
 ## 🔮 Future Enhancements
 
 ### Potential Features
-- [ ] **3D Movement**: Add forward/backward depth control using hand distance from camera
+- [x] **3D Movement**: ✅ IMPLEMENTED - Forward/backward depth control using hand distance from camera
 - [ ] **Dual-Hand Control**: Left hand = movement, Right hand = rotation
 - [ ] **Obstacle Avoidance**: Detect and avoid virtual obstacles
 - [ ] **Mission Modes**: Waypoint navigation, pattern flying
-- [ ] **Gesture Library**: Additional gestures for advanced maneuvers
-- [ ] **Performance Metrics**: Track flight time, smoothness scores
-- [ ] **Replay System**: Record and replay flight sessions
+- [ ] **Gesture Library**: Additional gestures for advanced maneuvers (rotation, flips)
+- [ ] **Performance Metrics**: Track flight time, smoothness scores, 3D distance traveled
+- [ ] **Replay System**: Record and replay flight sessions in 3D
 - [ ] **Multi-Drone Support**: Control multiple drones simultaneously
+- [ ] **VR/AR Integration**: Immersive visualization in virtual/augmented reality
 
 ### Technical Improvements
 - [ ] GPU acceleration for MediaPipe
@@ -380,17 +446,21 @@ new_drone.py
 ├── Setup & Configuration (Lines 1-20)
 │   ├── MediaPipe initialization
 │   └── Camera setup
-├── Constants & State Variables (Lines 21-60)
+├── Constants & State Variables (Lines 21-70)
 │   ├── State definitions
+│   ├── 3D position variables (X, Y, Z)
+│   ├── Depth control parameters
 │   ├── Physical parameters
 │   └── Hand landmark connections
-├── Main Loop (Lines 61-246)
+├── Main Loop (Lines 71-280)
 │   ├── Frame capture & preprocessing
 │   ├── Hand detection & gesture classification
+│   ├── 3D depth calculation (palm width)
 │   ├── State machine logic
-│   ├── Position & size calculations
-│   └── Rendering & display
-└── Cleanup (Lines 247)
+│   ├── 3D position & size calculations
+│   ├── Perspective scaling
+│   └── Rendering & display (with depth indicator)
+└── Cleanup (Line 281)
 ```
 
 ## 📄 License

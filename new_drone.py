@@ -29,11 +29,11 @@ STATE_LANDING  = "LANDING"
 
 drone_state = STATE_GROUNDED
 
-# Drone position / size on screen
-drone_x, drone_y, drone_size = 400, 300, 40
+# Drone position / size on screen (now with 3D depth!)
+drone_x, drone_y, drone_z, drone_size = 400, 300, 0.5, 40
 
 # Smoothing (where we are right now)
-curr_x, curr_y = 400, 300
+curr_x, curr_y, curr_z = 400, 300, 0.5
 
 GROUND_Y_RATIO   = 0.85          # where the ground line sits (% of frame height)
 HOVER_ALT        = 1.0           # normalised hover altitude
@@ -41,6 +41,11 @@ TAKEOFF_SPEED    = 0.02          # how fast the auto-takeoff rises per frame
 LANDING_SPEED    = 0.015         # how fast the auto-landing descends per frame
 GROUNDED_SIZE    = 30            # small drone when on ground
 HOVER_SIZE       = 40            # default size in the air
+
+# 3D DEPTH CONTROL
+MIN_DEPTH        = 0.2           # far back (20%)
+MAX_DEPTH        = 1.0           # close forward (100%)
+DEPTH_SMOOTHING  = 0.15          # smoothing factor for Z-axis
 
 altitude     = 0.0               # 0 = ground, 1 = hover height
 fist_start   = None              # timestamp when fist was first detected (for hold-to-land)
@@ -100,6 +105,17 @@ while cap.isOpened():
                 gesture = "fist"
             elif dist > 0.2:
                 gesture = "open"
+            
+            # Calculate hand size for 3D depth control (palm width)
+            # Using distance between thumb base and pinky base
+            thumb_base = landmarks[1]
+            pinky_base = landmarks[17]
+            hand_width = math.hypot(pinky_base.x - thumb_base.x, pinky_base.y - thumb_base.y)
+            
+            # Map hand width to depth (larger hand = closer, smaller = farther)
+            # Typical hand width range: 0.15 (far) to 0.35 (close)
+            target_depth = (hand_width - 0.15) / (0.35 - 0.15)
+            target_depth = max(MIN_DEPTH, min(MAX_DEPTH, target_depth))  # clamp
 
     if drone_state == STATE_GROUNDED:
         #  Open hand = take off.
@@ -119,19 +135,33 @@ while cap.isOpened():
             drone_state = STATE_HOVER
             fist_start = time.time()   # start the "hold to land" timer
         elif gesture == "open" and results.hand_landmarks:
-            # Move toward hand position
+            # Move toward hand position (3D control)
             for landmarks in results.hand_landmarks:
                 target_x = int(landmarks[9].x * w)
                 target_y = int(landmarks[9].y * h)
                 curr_x = int(curr_x * 0.8 + target_x * 0.2)
                 curr_y = int(curr_y * 0.8 + target_y * 0.2)
+                
+                # 3D DEPTH CONTROL: Update Z-coordinate with smoothing
+                thumb_base = landmarks[1]
+                pinky_base = landmarks[17]
+                hand_width = math.hypot(pinky_base.x - thumb_base.x, pinky_base.y - thumb_base.y)
+                target_depth = (hand_width - 0.15) / (0.35 - 0.15)
+                target_depth = max(MIN_DEPTH, min(MAX_DEPTH, target_depth))
+                curr_z = curr_z * (1 - DEPTH_SMOOTHING) + target_depth * DEPTH_SMOOTHING
+                
+                # Size based on both hand spread AND depth (perspective)
                 wrist = landmarks[0]
                 tip   = landmarks[12]
                 dist  = math.hypot(tip.x - wrist.x, tip.y - wrist.y)
-                target_size = int(dist * 300)
+                base_size = int(dist * 300)
+                # Apply perspective scaling: closer = bigger, farther = smaller
+                depth_scale = 0.5 + curr_z * 0.5  # scale from 0.5x to 1.0x
+                target_size = int(base_size * depth_scale)
                 drone_size = int(drone_size * 0.9 + target_size * 0.1)
             drone_x = curr_x
             drone_y = curr_y
+            drone_z = curr_z
 
     elif drone_state == STATE_HOVER:
         # Drone holds position.  Open hand = resume flying.
@@ -160,23 +190,26 @@ while cap.isOpened():
         # Sit on the ground, centered
         drone_x = w // 2
         drone_y = ground_y
+        drone_z = 0.5  # middle depth
         drone_size = GROUNDED_SIZE
-        curr_x, curr_y = drone_x, drone_y
+        curr_x, curr_y, curr_z = drone_x, drone_y, drone_z
 
     elif drone_state == STATE_TAKEOFF:
         # Rise straight up from ground to hover position
         drone_x = w // 2
         drone_y = int(ground_y - altitude * (ground_y - h * 0.35))
+        drone_z = 0.5  # maintain middle depth during takeoff
         drone_size = int(GROUNDED_SIZE + altitude * (HOVER_SIZE - GROUNDED_SIZE))
-        curr_x, curr_y = drone_x, drone_y
+        curr_x, curr_y, curr_z = drone_x, drone_y, drone_z
 
     elif drone_state == STATE_LANDING:
         # Descend from current position toward ground
         land_target_y = ground_y
         drone_y = int(land_target_y - altitude * (land_target_y - drone_y))
         drone_x = int(drone_x * 0.95 + (w // 2) * 0.05)   # drift back to center
+        drone_z = drone_z * 0.95 + 0.5 * 0.05  # slowly return to middle depth
         drone_size = int(GROUNDED_SIZE + altitude * (HOVER_SIZE - GROUNDED_SIZE))
-        curr_x, curr_y = drone_x, drone_y
+        curr_x, curr_y, curr_z = drone_x, drone_y, drone_z
 
   
     # DRAW THE SCENE 
@@ -204,7 +237,7 @@ while cap.isOpened():
     status_msgs = {
         STATE_GROUNDED: "GROUNDED  |  Open hand = Take off",
         STATE_TAKEOFF:  "TAKEOFF   |  Auto-ascending...",
-        STATE_FLYING:   "FLYING    |  Steer with hand  |  Fist = Brake",
+        STATE_FLYING:   "FLYING (3D) |  Hand position = X/Y, Hand size = Z depth  |  Fist = Brake",
         STATE_HOVER:    "HOVER     |  Open hand = Resume  |  Hold fist 2s = Land",
         STATE_LANDING:  "LANDING   |  Auto-descending...",
     }
@@ -220,6 +253,21 @@ while cap.isOpened():
     cv2.circle(frame, (bar_x, alt_y), 6, color, -1)
     cv2.putText(frame, "ALT", (bar_x - 15, bar_top - 10),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 100, 100), 1)
+
+    # Depth bar on the left side (3D forward/backward position)
+    depth_bar_x = 40
+    depth_bar_top = int(h * 0.1)
+    depth_bar_bot = int(h * 0.7)
+    cv2.line(frame, (depth_bar_x, depth_bar_top), (depth_bar_x, depth_bar_bot), (100, 100, 100), 2)
+    # Map Z from [MIN_DEPTH, MAX_DEPTH] to bar position
+    depth_y = int(depth_bar_bot - (drone_z - MIN_DEPTH) / (MAX_DEPTH - MIN_DEPTH) * (depth_bar_bot - depth_bar_top))
+    cv2.circle(frame, (depth_bar_x, depth_y), 6, color, -1)
+    cv2.putText(frame, "DEPTH", (depth_bar_x - 20, depth_bar_top - 10),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 100, 100), 1)
+    cv2.putText(frame, "NEAR", (depth_bar_x - 20, depth_bar_top + 15),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.3, (100, 100, 100), 1)
+    cv2.putText(frame, "FAR", (depth_bar_x - 15, depth_bar_bot + 15),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.3, (100, 100, 100), 1)
 
     # Fist hold-to-land countdown (show during HOVER + fist)
     if drone_state == STATE_HOVER and fist_start is not None:
