@@ -34,7 +34,7 @@ A real-time virtual drone simulator with **full 3D maneuvering** controlled enti
 5. **Real-Time Visual Feedback**:
    - Color-coded states for instant status recognition
    - Live altitude indicator bar (Y-axis)
-   - **NEW: Live depth indicator bar (Z-axis)**
+   - **Live depth indicator bar (Z-axis)**
    - Landing countdown visualization
    - Hand landmark overlay for debugging
 
