@@ -427,17 +427,6 @@ This project demonstrates:
 - [ ] **Obstacle Avoidance**: Detect and avoid virtual obstacles
 - [ ] **Mission Modes**: Waypoint navigation, pattern flying
 - [ ] **Gesture Library**: Additional gestures for advanced maneuvers (rotation, flips)
-- [ ] **Performance Metrics**: Track flight time, smoothness scores, 3D distance traveled
-- [ ] **Replay System**: Record and replay flight sessions in 3D
-- [ ] **Multi-Drone Support**: Control multiple drones simultaneously
-- [ ] **VR/AR Integration**: Immersive visualization in virtual/augmented reality
-
-### Technical Improvements
-- [ ] GPU acceleration for MediaPipe
-- [ ] Kalman filtering for even smoother tracking
-- [ ] Gesture confidence thresholds
-- [ ] Configurable control sensitivity
-- [ ] Touch-free calibration system
 
 ## 📝 Code Structure
 
